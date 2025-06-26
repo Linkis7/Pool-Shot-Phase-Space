@@ -1,0 +1,160 @@
+%------------------------------------------------------------%
+%------------------------------------------------------------%
+                %% Setting up table and balls %%
+%------------------------------------------------------------%
+%------------------------------------------------------------%
+
+% Pool table info
+% Table boundaries
+table_width = 107;
+table_length = 213;
+
+table_COF = 0.03; % table felt coefficient of friction
+g = 9.81; % m/s/s gravity 
+
+% Cue ball info
+placing = [0.5, 0.25];
+cue_pos = [table_width,table_length] .* placing; % x,y position
+
+cue_vel = 100; % mm/s current velocity
+cue_ang = 90; % degrees angle aimed at
+
+cue_diam = 5.7; % radius of cueball, so cue ball doesnt clip into anything
+cue_radius= 5.7/2;
+
+% 8 Ball
+placing = [0.5, 0.75];
+bb_pos = [table_width,table_length] .* placing; % x,y position
+
+bb_diam = 6.03; % radius of object balls
+bb_radius = bb_diam/2;
+bb_vol = 0;
+bb_ang = 0;
+
+% Packaging up structs for later functions
+% Table setup
+tableParams.width = table_width;
+tableParams.length = table_length;
+tableParams.cof = table_COF;
+
+%------------------------------------------------------------%
+%------------------------------------------------------------%
+                    %% Graph of game %%
+%------------------------------------------------------------%
+%------------------------------------------------------------%
+
+% Setting up figure view of pool table
+figure
+ylim([0 225]), xlim([-25 200])
+set(gca,'xtick',[]), set(gca,'ytick',[])
+hold on, axis square off
+rectangle('Position',[0,0 table_width,table_length],'EdgeColor','g','LineWidth',2)
+line([0,table_width],[table_length/4, table_length/4], 'Color', 'k')
+cue_plot = plot(cue_pos(1),cue_pos(2),'o','Color',[0.2 0.2 0.2], ...
+    'MarkerFaceColor',[0.8 0.8 0.8],'MarkerSize',cue_diam);
+bb_plot = plot(bb_pos(1),bb_pos(2),'o','Color',[0 0 0], ...
+    'MarkerFaceColor',[0 0 0],'MarkerSize',6);
+
+
+% Info for game
+T = 15; % seconds duration of entire sim
+steps = 100; % number of step increments
+t = linspace(0,T,steps); % timings at each step
+dt = T/steps; % second increments at each step
+t_idx = 0;
+
+% Adjusting speed of cue ball for timing
+cue_vel_dt = cue_vel*dt;
+
+% Run through each time increment for the cue ball
+while cue_vel_dt > 0
+    % Tracking current time passed
+    t_idx = t_idx + 1;
+
+
+    % cue ball changes 
+    [cue_pos, cue_vel, cue_ang];
+
+    % Adjusting speed for dt
+    cue_vel_dt = max(cue_vel_dt - (table_COF*g*dt),0); % max() is to avoid negative velocities
+
+    % Changes in ball positions
+    % Finding vector components from cue velocity and angle
+    cue_Xcomp = cos(pi*cue_ang/180);
+    cue_Ycomp = sin(pi*cue_ang/180);
+
+    cue_Xchange = cue_vel_dt * (cue_Xcomp/(abs(cue_Xcomp)+abs(cue_Ycomp)));
+    cue_Ychange = cue_vel_dt * (cue_Ycomp/(abs(cue_Xcomp)+abs(cue_Ycomp)));
+
+    % Check for cushion hits
+    [cue_ang, cue_Xchange, cue_Ychange, cue_vel_dt] = cushionCollidor(cue_pos, cue_ang, cue_vel_dt, ...
+        cue_Xchange, cue_Ychange, tableParams);
+    cue_pos = cue_pos + [cue_Xchange, cue_Ychange];
+
+    % Update positions of balls O_o
+    set(cue_plot,'XData',cue_pos(1),'YData',cue_pos(2))
+    fig_title = get(gca,'Title');
+    set(fig_title,'String',strcat('t = ', num2str( t_idx*dt ) ) );
+
+    % Draw next frame
+    drawnow
+    pause(0.02)
+
+end
+
+%------------------------------------------------------------%
+%------------------------------------------------------------%
+                    %% MISC functions %%
+%------------------------------------------------------------%
+%------------------------------------------------------------%
+
+function [cue_angle, cue_Xchange, cue_Ychange, cue_vel] = cushionCollidor(cue_pos, cue_angle, cue_vel, ...
+    cue_Xchange, cue_Ychange, tableParams)
+    
+    table_width = tableParams.width;
+    table_length = tableParams.length;
+
+    % Radius of cueball, so cue ball doesnt clip into anything    
+    cue_radius = 3; 
+
+    % Using coefficient of restitution of 0.8
+    table_COR = 0.8;
+
+    cue_posX = cue_pos(1);
+    cue_posY = cue_pos(2);
+
+    % Logic checks for cushion collisions
+    R_collision = cue_posX + cue_Xchange >= table_width - cue_radius;
+    L_collision = cue_posX + cue_Xchange <= cue_radius;
+
+    U_collision = cue_posY + cue_Ychange >= table_length - cue_radius;
+    D_collision = cue_posY + cue_Ychange <= cue_radius;
+
+    % Left or right collision
+    if L_collision || R_collision
+        cue_Xchange = -cue_Xchange;
+        cue_vel = cue_vel * table_COR;
+
+        if cue_angle <= 180
+            cue_angle = 180 - cue_angle;
+        else
+            cue_angle = 360 - (cue_angle-180);
+        end
+    end
+
+    if U_collision || D_collision
+        cue_Ychange = -cue_Ychange;
+        cue_vel = cue_vel * table_COR;
+
+        if cue_angle <= 90
+            cue_angle = 360 - cue_angle;
+        elseif cue_angle <= 180
+            cue_angle = 360-cue_angle;
+        elseif cue_angle <= 270
+            cue_angle = 360-cue_angle;            
+        elseif cue_angle <= 360
+            cue_angle = 360 - cue_angle;
+        end
+    end
+
+end
