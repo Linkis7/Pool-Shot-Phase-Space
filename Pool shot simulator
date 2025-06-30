@@ -1,5 +1,20 @@
 %------------------------------------------------------------%
 %------------------------------------------------------------%
+% TO-DO
+%
+%   Adjust ballcollision to work for non head-on collisions
+%   Allow for more balls
+%   Add:
+%       Pockets
+%       More balls
+%   Include solver for shots
+%   Fix title positioning to be centred over table
+%------------------------------------------------------------%
+%------------------------------------------------------------%
+
+
+%------------------------------------------------------------%
+%------------------------------------------------------------%
                 %% Setting up table and balls %%
 %------------------------------------------------------------%
 %------------------------------------------------------------%
@@ -13,24 +28,29 @@ tableCOF = 0.03; % table felt coefficient of friction
 tableCOR = 0.8; % table cushion coefficient of restitution
 g = 9.81; % m/s/s gravity 
 
-% Cue ball info
-placing = [0.5, 0.25];
+% Ball info
+ballMass = 0.17; % kilogram weight of balls 
+ballDiam = 5.7; % radius of cueball, so cue ball doesnt clip into anything
+ballRadius = ballDiam/2;
+ballCOR = 0.94;
+
+% Cue
+placing = [0.1, 0.4];
 cuePos = [tableWidth,tableLength] .* placing; % x,y position
 
 cueVel = 50; % mm/s current velocity
-cueAng = 90; % degrees angle aimed at
+cueDirection = 55;
+cueAng = cueDirection*pi/180; % degrees angle aimed at
 
-cueDiam = 5.7; % radius of cueball, so cue ball doesnt clip into anything
-cueRadius= cueDiam/2;
-
-% 8 Ball
+% Object ball
 placing = [0.5, 0.75];
-bbPos = [tableWidth,tableLength] .* placing; % x,y position
+objPos = [tableWidth,tableLength] .* placing; % x,y position
+objVel = 0;
+objAng = 0;
 
-bbDiam = 6.03; % radius of object balls
-bbRadius = bbDiam/2;
-bbVel = 0;
-bbAng = 0;
+objDiam = 6.03; % radius of object balls
+objRadius = objDiam/2;
+
 
 % Packaging up structs for later functions
 % Table setup
@@ -38,6 +58,11 @@ tableParams.width = tableWidth;
 tableParams.length = tableLength;
 tableParams.cof = tableCOF;
 tableParams.cor = tableCOR;
+
+% Balls setup
+ballParams.ballMass = ballMass;
+ballParams.ballRadius = ballRadius;
+ballParams.ballCOR = ballCOR;
 
 %------------------------------------------------------------%
 %------------------------------------------------------------%
@@ -49,41 +74,55 @@ tableParams.cor = tableCOR;
 figure
 ylim([0 225]), xlim([-25 200])
 set(gca,'xtick',[]), set(gca,'ytick',[])
+title(gca,'','Position',[4 4])
 hold on, axis square off
 rectangle('Position',[0,0 tableWidth,tableLength],'EdgeColor','g','LineWidth',2)
 line([0,tableWidth],[tableLength/4, tableLength/4], 'Color', 'k')
 cue_plot = plot(cuePos(1),cuePos(2),'o','Color',[0.2 0.2 0.2], ...
-    'MarkerFaceColor',[0.8 0.8 0.8],'MarkerSize',cueDiam);
-bb_plot = plot(bbPos(1),bbPos(2),'o','Color',[0 0 0], ...
-    'MarkerFaceColor',[0 0 0],'MarkerSize',6);
+    'MarkerFaceColor',[0.8 0.8 0.8],'MarkerSize',ballDiam);
+obj_plot = plot(objPos(1),objPos(2),'o','Color',[0 0 0], ...
+    'MarkerFaceColor',[0 0 0],'MarkerSize',ballDiam);
 
 
 % Info for game
-T = 15; % seconds duration of entire sim
-steps = 100; % number of step increments
-t = linspace(0,T,steps); % timings at each step
-dt = T/steps; % second increments at each step
+dt = 0.1; % second increments at each interval
 tidx = 0;
 
-cueVel_dt = cueVel*dt;
+% Angle for shot
+hitAngle = atan((objPos(2)-cuePos(2)) / (objPos(1)-cuePos(1)));
+cueAng = hitAngle;
 
 % Run through each time increment for the cue ball
-while cueVel_dt > 0
+while cueVel+objVel > 0
     % Tracking current time passed
-    tidx = tidx + 1;
+    tidx = tidx + dt;
 
     % Cue ball changes 
-    [cuePos, cueVel_dt, cueAng] = cueChanger(cuePos, cueVel_dt, cueAng, dt, tableParams);
+    [cuePos, cueVel, cueAng] = ballMover(cuePos, cueVel, cueAng, dt, tableParams, ballParams);
+    % Object ball changes 
+    [objPos, objVel, objAng] = ballMover(objPos, objVel, objAng, dt, tableParams, ballParams);
 
+    
+    % Check for object ball hits
+    % change BB to ball B and cue to ball A for function
+    dist2obj_sq = (objPos(1) - cuePos(1))^2 + (objPos(2) - cuePos(2))^2;
+    if dist2obj_sq <= objRadius^2
+        if objVel > cueVel
+            [objVel, objAng, cueVel, cueAng] = ballCollision(objPos, objVel, objAng, cuePos, cueVel, cueAng, ballParams);
+        else
+            [cueVel, cueAng, objVel, objAng] = ballCollision(cuePos, cueVel, cueAng, objPos, objVel, objAng, ballParams);
+        end
+    end
+    
     % Update positions of balls
     set(cue_plot,'XData',cuePos(1),'YData',cuePos(2))
+    set(obj_plot,'XData',objPos(1),'YData',objPos(2))
     fig_title = get(gca,'Title');
-    set(fig_title,'String',strcat('t = ', num2str( tidx*dt ) ) );
+    set(fig_title,'String',strcat('t = ', num2str(tidx)));
 
     % Draw next frame
     drawnow
     pause(0.02)
-
 end
 
 %------------------------------------------------------------%
@@ -92,57 +131,97 @@ end
 %------------------------------------------------------------%
 %------------------------------------------------------------%
 
-function [cuePos, cueVel, cueAng] = cueChanger(cuePos, cueVel, cueAng, dt, tableParams)
+function [ballPos, ballVel, ballAng] = ballMover(ballPos, ballVel, ballAng, dt, tableParams, ballParams)
+    % Don't bother trying to do anything if the ball isn't moving
+    if ballVel == 0
+        return
+    end
+
     % Adjust ball velocity for dt time increments and applying deceleration from
     % friction with table
-    cueVel = max(cueVel-(tableParams.cof*9.81*dt), 0); % max() to avoid negative velocities
+    ballVel_dt = max(ballVel*dt-(tableParams.cof*9.81*dt), 0); % max() to avoid negative velocities
 
     % Computing vector components of cue ball movement from
     % (magnitude,degrees) vector format
-    xComp = cos(pi*cueAng/180);
-    yComp = sin(pi*cueAng/180);
+    xComp = cos(ballAng);
+    yComp = sin(ballAng);
 
     % Change in xy positions across given time step
-    xChange = cueVel*xComp / ((abs(xComp)+abs(yComp)));
-    yChange = cueVel*yComp / ((abs(xComp)+abs(yComp)));
-
+    xChange = ballVel_dt*xComp / ((abs(xComp)+abs(yComp)));
+    yChange = ballVel_dt*yComp / ((abs(xComp)+abs(yComp)));
+    
     % Checking for and dealing with any cushion hits
-    [cueAng, xChange, yChange, cueVel] = cushionCollidor(cuePos, cueVel, cueAng, xChange, yChange, tableParams);
+    [ballAng, xChange, yChange, ballVel_dt] = cushionCollidor(ballPos, ballVel_dt, ballAng, xChange, yChange, tableParams, ballParams);
     
     % Updating cue position and velocity for function output
-    cuePos = cuePos + [xChange, yChange];
+    ballPos = ballPos + [xChange, yChange];
+    ballVel = ballVel_dt/dt;
 end
 
-function [cueAng, xChange, yChange, cueVel] = cushionCollidor(cuePos, cueVel, cueAng, xChange, yChange, tableParams)
-    % Table specs
+%------------------------------------------------------------%
+
+function [cueAng, xChange, yChange, cueVel] = cushionCollidor(cuePos, cueVel, cueAng, xChange, yChange, tableParams, ballParams)
+    % Predefined specs
     tableWidth = tableParams.width;
     tableLength = tableParams.length;
     tableCOR = tableParams.cor;
-
-    % Radius of cueball, so cue ball doesnt clip into anything    
-    cueRadius = 3; 
+    
+    ballRadius = ballParams.ballRadius;
 
     % Cue ball positions
     xPos = cuePos(1);
     yPos = cuePos(2);
 
     % Logic checks for cushion collisions
-    R_collision = xPos + xChange >= tableWidth - cueRadius;
-    L_collision = xPos + xChange <= cueRadius;
+    R_collision = xPos + xChange >= tableWidth - ballRadius;
+    L_collision = xPos + xChange <= ballRadius;
 
-    U_collision = yPos + yChange >= tableLength - cueRadius;
-    D_collision = yPos + yChange <= cueRadius;
+    U_collision = yPos + yChange >= tableLength - ballRadius;
+    D_collision = yPos + yChange <= ballRadius;
 
     % Left or right collision
     if L_collision || R_collision
         xChange = -xChange;
         cueVel = cueVel * tableCOR;
-        cueAng = 180 - cueAng;
+        cueAng = pi - cueAng;
     end
 
     if U_collision || D_collision
         yChange = -yChange;
         cueVel = cueVel * tableCOR;
-        cueAng = 360 - cueAng;
+        cueAng = 2*pi - cueAng;
     end
+end
+
+%------------------------------------------------------------%
+
+% Calculates directions and velocities after collision between two
+% balls 'a' and 'b'
+function [aVel, aAng, bVel, bAng] = ballCollision(aPos, aVel, aAng, bPos, bVel, bAng, ballParams)
+    % Ball A is assumed to be colliding with B for this function,
+    if bVel > aVel
+    
+    end
+
+    % General info
+    ballMass = ballParams.ballMass;
+    ballCOR = ballParams.ballCOR; % coefficient of restitution between the two balls
+
+    % Radians angle of line of collision (LOC) with A as origin and B as ray
+    LOCRad = atan2(bPos(2)-aPos(2), bPos(1)-aPos(1));
+    
+    bAng = LOCRad;
+    
+    % Quickly check if it's a headon collision
+    if aAng == bAng
+        bVel = aVel * ballCOR;
+        aVel = 0;
+        return
+    end
+    
+    LOCRadNorm_p = LOCRad+(pi/4);
+    LOCRadNorm_n = LOCRad-(pi/4);
+
+    bVel = aVel * ballCOR;
+    aVel = 0;
 end
